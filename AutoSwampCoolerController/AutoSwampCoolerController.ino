@@ -69,11 +69,12 @@ void stopLowBlower(){
 void setup() {
   Serial.begin(9600);
   
-  Serial.println("Initializing relays ...");
+  Serial.println();
+  Serial.print("Initializing relays ...");
   initLowBlower();
   Serial.println("Done");
   
-  Serial.println("Initializing temperature sensors ...");
+  Serial.print("Initializing temperature sensors ...");
 
   dhtIn.begin();
   dhtOut.begin();

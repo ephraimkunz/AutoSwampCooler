@@ -10,6 +10,7 @@
 #define RelayPump 6
 
 const unsigned long TimeBetweenAverages = 1000 * 15; //30 seconds
+const unsigned long TimeBetweenSamples = 1000 * 2;
 unsigned long lastAverage = 0;
 int numDataPoints = 0;
 double runningInSum = 0;
@@ -90,7 +91,7 @@ void setup() {
 */
 
 void loop() {
-  delay(2000);
+  delay(TimeBetweenSamples);
   
   float inHumid = dhtIn.readHumidity();
   float inTemp = dhtIn.readTemperature(true);
@@ -126,7 +127,7 @@ void loop() {
     Serial.print(avgOut);
     Serial.println();
     
-    if(abs(avgIn - avgOut) >= TempDiffThreshold){
+    if((avgIn - avgOut) >= TempDiffThreshold){
       startLowBlower();
     }
     else{

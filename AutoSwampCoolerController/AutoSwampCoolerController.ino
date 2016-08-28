@@ -49,7 +49,7 @@ void setRelay(int relayPin, int newState){
 void initRelays(){
  pinMode(RelayHighBlower, OUTPUT);
  pinMode(RelayLowBlower, OUTPUT);
- pinMode(RelayPump, OUTPUT)
+ pinMode(RelayPump, OUTPUT);
 }
 
 /******* Low Blower ***********/
@@ -58,8 +58,8 @@ unsigned long lowBlowerStateChangeTime;
 
 void initLowBlower(){
   pinMode(RelayLowBlower, OUTPUT);
-  digitalWrite(RelayLowBlower, LOW);
-  lowBlowerCurrentState = LOW;
+  digitalWrite(RelayLowBlower, HIGH);
+  lowBlowerCurrentState = HIGH;
   lowBlowerStateChangeTime = millis();
 }
 
@@ -101,8 +101,9 @@ void setup() {
   
   Serial.println();
   Serial.print("Initializing relays ...");
-  initLowBlower();
+  initRelays();
   initSwitches();
+  initLowBlower();
   Serial.println("Done");
   
   Serial.print("Initializing temperature sensors ...");
@@ -110,6 +111,8 @@ void setup() {
   dhtIn.begin();
   dhtOut.begin();
   Serial.println("Done");
+  
+  Serial.println("Starting sketch with manual mode enabled");
 }
 
 
@@ -120,9 +123,22 @@ void setup() {
 4. Else, turn off blower
 */
 
+boolean manualModeWasEnabled = true;
+
 void loop() {
   if(automaticModeEnabled()){
-      delay(TimeBetweenSamples);
+    if(manualModeWasEnabled){
+      Serial.println("Switching to automatic mode");
+      
+      //Reset relay positions
+      setRelay(RelayHighBlower, HIGH);
+      setRelay(RelayLowBlower, HIGH);
+      setRelay(RelayPump, HIGH);
+      
+      //Reset timing logging
+      initLowBlower();
+    }
+    delay(TimeBetweenSamples);
     
     float inHumid = dhtIn.readHumidity();
     float inTemp = dhtIn.readTemperature(true);
@@ -171,9 +187,15 @@ void loop() {
       runningOutSum = 0;
       numDataPoints = 0;
     }
+    
+    manualModeWasEnabled = false;
   }
   
   else{ // We are in manual mode
+    if(!manualModeWasEnabled){
+     Serial.println("Switching to manual mode"); 
+    }
+    manualModeWasEnabled = true;
     setRelay(RelayHighBlower, digitalRead(HighBlowerSwitch));
     setRelay(RelayLowBlower, digitalRead(LowBlowerSwitch));
     setRelay(RelayPump, digitalRead(PumpSwitch));

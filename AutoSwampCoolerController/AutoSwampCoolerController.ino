@@ -5,9 +5,15 @@
 
 #define ExtTempSens 2
 #define IntTempSens 3
+
+#define AutoSwitch 4
+#define LowBlowerSwitch 5
+#define HighBlowerSwitch 6
+#define PumpSwitch 7
+
 #define RelayLowBlower 8
-#define RelayHighBlower 5
-#define RelayPump 6
+#define RelayHighBlower 9
+#define RelayPump 10
 
 const unsigned long TimeBetweenAverages = 1000 * 15; //30 seconds
 const unsigned long TimeBetweenSamples = 1000 * 2;
@@ -23,6 +29,29 @@ const double TempDiffThreshold = 2; //Difference of two degrees Farenheit before
 DHT dhtIn  = DHT(IntTempSens, DHTTYPE);
 DHT dhtOut = DHT(ExtTempSens, DHTTYPE);
 
+/******** Switches *************/
+
+void initSwitches(){
+ pinMode(AutoSwitch, INPUT);
+ pinMode(LowBlowerSwitch, INPUT);
+ pinMode(HighBlowerSwitch, INPUT);
+ pinMode(PumpSwitch, INPUT);
+}
+boolean automaticModeEnabled(){
+  return digitalRead(AutoSwitch) == LOW;
+}
+
+/********* Relays ********/
+void setRelay(int relayPin, int newState){
+ digitalWrite(relayPin, newState); 
+}
+
+void initRelays(){
+ pinMode(RelayHighBlower, OUTPUT);
+ pinMode(RelayLowBlower, OUTPUT);
+ pinMode(RelayPump, OUTPUT)
+}
+
 /******* Low Blower ***********/
 boolean lowBlowerCurrentState;
 unsigned long lowBlowerStateChangeTime;
@@ -35,7 +64,7 @@ void initLowBlower(){
 }
 
 void startLowBlower(){
-  if(lowBlowerCurrentState == HIGH){
+  if(lowBlowerCurrentState == LOW){
     Serial.println("Low blower remains running");
   }
   else{
@@ -43,15 +72,15 @@ void startLowBlower(){
     Serial.print((millis() - lowBlowerStateChangeTime) / 1000.0);
     Serial.println(" seconds");
     Serial.println("Starting low blower ...");
-    digitalWrite(RelayLowBlower, HIGH);
-    lowBlowerCurrentState = HIGH;
+    digitalWrite(RelayLowBlower, LOW);
+    lowBlowerCurrentState = LOW;
     lowBlowerStateChangeTime = millis();
   }
 }
 
 
 void stopLowBlower(){
-  if(lowBlowerCurrentState == LOW){
+  if(lowBlowerCurrentState == HIGH){
     Serial.println("Low blower remains stopped");
   }
   else{
@@ -59,8 +88,8 @@ void stopLowBlower(){
     Serial.print((millis() - lowBlowerStateChangeTime) / 1000.0);
     Serial.println(" seconds");
     Serial.println("Stopping low blower ...");
-    digitalWrite(RelayLowBlower, LOW);
-    lowBlowerCurrentState = LOW;
+    digitalWrite(RelayLowBlower, HIGH);
+    lowBlowerCurrentState = HIGH;
     lowBlowerStateChangeTime = millis();
   }
 }
@@ -73,6 +102,7 @@ void setup() {
   Serial.println();
   Serial.print("Initializing relays ...");
   initLowBlower();
+  initSwitches();
   Serial.println("Done");
   
   Serial.print("Initializing temperature sensors ...");
@@ -91,54 +121,61 @@ void setup() {
 */
 
 void loop() {
-  delay(TimeBetweenSamples);
-  
-  float inHumid = dhtIn.readHumidity();
-  float inTemp = dhtIn.readTemperature(true);
-  
-  float outHumid = dhtOut.readHumidity();
-  float outTemp = dhtOut.readTemperature(true);
-
-  // Check if any reads failed and exit early (to try again).
-  if (isnan(inTemp) || isnan(outTemp)) {
-    Serial.println("Failed to read from DHT sensors. ");
-    Serial.println("Trying again...");
-    return;
-  }
-  
-  Serial.print("inTemp: ");
-  Serial.print(inTemp);
-  Serial.print("\toutTemp: ");
-  Serial.print(outTemp);
-  Serial.println();
-  
-  runningInSum += inTemp;
-  runningOutSum += outTemp;
-  numDataPoints ++;
-  
-  if(millis() > (lastAverage + TimeBetweenAverages)){
-    double avgOut = runningOutSum / numDataPoints;
-    double avgIn = runningInSum / numDataPoints;
+  if(automaticModeEnabled()){
+      delay(TimeBetweenSamples);
     
-    Serial.println();
-    Serial.print("avgInTemp: ");
-    Serial.print(avgIn);
-    Serial.print("\tavgOutTemp");
-    Serial.print(avgOut);
-    Serial.println();
+    float inHumid = dhtIn.readHumidity();
+    float inTemp = dhtIn.readTemperature(true);
     
-    if((avgIn - avgOut) >= TempDiffThreshold){
-      startLowBlower();
-    }
-    else{
-     stopLowBlower(); 
+    float outHumid = dhtOut.readHumidity();
+    float outTemp = dhtOut.readTemperature(true);
+  
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(inTemp) || isnan(outTemp)) {
+      Serial.println("Failed to read from DHT sensors. ");
+      Serial.println("Trying again...");
+      return;
     }
     
+    Serial.print("inTemp: ");
+    Serial.print(inTemp);
+    Serial.print("\toutTemp: ");
+    Serial.print(outTemp);
     Serial.println();
-    lastAverage = millis();
-    runningInSum = 0;
-    runningOutSum = 0;
-    numDataPoints = 0;
+    
+    runningInSum += inTemp;
+    runningOutSum += outTemp;
+    numDataPoints ++;
+    
+    if(millis() > (lastAverage + TimeBetweenAverages)){
+      double avgOut = runningOutSum / numDataPoints;
+      double avgIn = runningInSum / numDataPoints;
+      
+      Serial.println();
+      Serial.print("avgInTemp: ");
+      Serial.print(avgIn);
+      Serial.print("\tavgOutTemp");
+      Serial.print(avgOut);
+      Serial.println();
+      
+      if((avgIn - avgOut) >= TempDiffThreshold){
+        startLowBlower();
+      }
+      else{
+       stopLowBlower(); 
+      }
+      
+      Serial.println();
+      lastAverage = millis();
+      runningInSum = 0;
+      runningOutSum = 0;
+      numDataPoints = 0;
+    }
   }
   
+  else{ // We are in manual mode
+    setRelay(RelayHighBlower, digitalRead(HighBlowerSwitch));
+    setRelay(RelayLowBlower, digitalRead(LowBlowerSwitch));
+    setRelay(RelayPump, digitalRead(PumpSwitch));
+  }
 }

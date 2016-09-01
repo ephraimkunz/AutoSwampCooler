@@ -17,6 +17,5 @@ Arduino and Raspberry Pi code to automate your swamp cooler (turn on the low blo
 
 
 ## Tips and Tuning
-- There are several parameters in the code that may need to be adjusted to provide better averages over time if your sensors are as cheap as mine.
-- 
+* There are several parameters in the code that may need to be adjusted to provide better averages over time if your sensors are as cheap as mine.
 

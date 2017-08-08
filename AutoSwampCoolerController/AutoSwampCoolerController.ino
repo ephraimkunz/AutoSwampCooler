@@ -1,203 +1,139 @@
 //AutomatedSwampCooler controller
-// Written by Ephraim Kunz
+// Author: Ephraim Kunz
 
 #include "DHT.h"
 
-#define ExtTempSens 2
-#define IntTempSens 3
+#define external_temp_pin 2
+#define internal_temp_pin 3
 
-#define AutoSwitch 4
-#define LowBlowerSwitch 5
-#define HighBlowerSwitch 6
-#define PumpSwitch 7
+#define low_blower_pin 8
+#define high_blower_pin 9
+#define pump_pin 10
 
-#define RelayLowBlower 8
-#define RelayHighBlower 9
-#define RelayPump 10
+#define set_temp 70 // Temperature we set on the interface to the circuit
+boolean setupHappened = false; // Have we run setup? Use to change logging for when we are just setting things up.
 
-const unsigned long TimeBetweenAverages = 1000 * 15; //30 seconds
-const unsigned long TimeBetweenSamples = 1000 * 2;
-unsigned long lastAverage = 0;
-int numDataPoints = 0;
-double runningInSum = 0;
-double runningOutSum = 0;
-const double TempDiffThreshold = 2; //Difference of two degrees Farenheit before we do anything
+#define temp_poll_interval (1000 * 10) // in milliseconds
 
-#define DHTTYPE DHT11   // DHT 11
-//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 
-DHT dhtIn  = DHT(IntTempSens, DHTTYPE);
-DHT dhtOut = DHT(ExtTempSens, DHTTYPE);
+typedef enum {
+  low_blower_type,
+  high_blower_type,
+  pump_type
+} relay_type;
 
-/******** Switches *************/
+// Order matters here, as relay_hot is actually low asserted logic.
+typedef enum {
+  relay_hot,
+  relay_cold
+} relay_state;
 
-void initSwitches(){
- pinMode(AutoSwitch, INPUT);
- pinMode(LowBlowerSwitch, INPUT);
- pinMode(HighBlowerSwitch, INPUT);
- pinMode(PumpSwitch, INPUT);
-}
-boolean automaticModeEnabled(){
-  return digitalRead(AutoSwitch) == LOW;
+char *stringForState(relay_state state) {
+  if (state == relay_hot) {
+    return "on";
+  }
+
+  return "off";
 }
 
-/********* Relays ********/
-void setRelay(int relayPin, int newState){
- digitalWrite(relayPin, newState); 
+struct relay {
+  char *name;
+  relay_type type;
+  int pin;
+  relay_state state;
+};
+
+relay low_blower = { "Low blower", low_blower_type, low_blower_pin, relay_cold };
+relay high_blower = { "High blower", high_blower_type, high_blower_pin, relay_cold };
+relay pump = { "Pump", pump_type, pump_pin, relay_cold };
+
+#define DHTTYPE DHT11   // DHT 11 temperature sensors
+DHT internal_temp  = DHT(internal_temp_pin, DHTTYPE);
+DHT external_temp = DHT(external_temp_pin, DHTTYPE);
+
+void logRelayChange(struct relay *theRelay, relay_state newState) {
+  if(newState == theRelay->state) {
+    Serial.print(theRelay->name);
+    Serial.print( " stayed ");
+    Serial.println(stringForState(newState));
+  } else {
+    Serial.print(theRelay->name);
+    Serial.print( " changed from ");
+    Serial.print(stringForState(theRelay->state));
+    Serial.print(" to ");
+    Serial.println(stringForState(newState));
+  }
+}
+
+void setRelay(struct relay *theRelay, relay_state state){
+  if (setupHappened)
+    logRelayChange(theRelay, state);
+  digitalWrite(theRelay->pin, state); 
+  theRelay->state = state;
 }
 
 void initRelays(){
- pinMode(RelayHighBlower, OUTPUT);
- pinMode(RelayLowBlower, OUTPUT);
- pinMode(RelayPump, OUTPUT);
+ pinMode(low_blower_pin, OUTPUT);
+ pinMode(high_blower_pin, OUTPUT);
+ pinMode(pump_pin, OUTPUT);
+
+ // Everything off
+ setRelay(&low_blower, relay_cold);
+ setRelay(&high_blower, relay_cold);
+ setRelay(&pump, relay_cold);
 }
 
-/******* Low Blower ***********/
-boolean lowBlowerCurrentState;
-unsigned long lowBlowerStateChangeTime;
-
-void initLowBlower(){
-  pinMode(RelayLowBlower, OUTPUT);
-  digitalWrite(RelayLowBlower, HIGH);
-  lowBlowerCurrentState = HIGH;
-  lowBlowerStateChangeTime = millis();
+void logTemps(float in, float out) {
+  Serial.print("Out: ");
+  Serial.print(out);
+  Serial.print(" *F, In: ");
+  Serial.print(in);
+  Serial.println(" *F");
 }
-
-void startLowBlower(){
-  if(lowBlowerCurrentState == LOW){
-    Serial.println("Low blower remains running");
-  }
-  else{
-    Serial.print("Low blower was off for ");
-    Serial.print((millis() - lowBlowerStateChangeTime) / 1000.0);
-    Serial.println(" seconds");
-    Serial.println("Starting low blower ...");
-    digitalWrite(RelayLowBlower, LOW);
-    lowBlowerCurrentState = LOW;
-    lowBlowerStateChangeTime = millis();
-  }
-}
-
-
-void stopLowBlower(){
-  if(lowBlowerCurrentState == HIGH){
-    Serial.println("Low blower remains stopped");
-  }
-  else{
-    Serial.print("Low blower ran for ");
-    Serial.print((millis() - lowBlowerStateChangeTime) / 1000.0);
-    Serial.println(" seconds");
-    Serial.println("Stopping low blower ...");
-    digitalWrite(RelayLowBlower, HIGH);
-    lowBlowerCurrentState = HIGH;
-    lowBlowerStateChangeTime = millis();
-  }
-}
-
-
 
 void setup() {
   Serial.begin(9600);
-  
   Serial.println();
-  Serial.print("Initializing relays ...");
+  
+  Serial.println("Initializing relays ...");
   initRelays();
-  initSwitches();
-  initLowBlower();
   Serial.println("Done");
   
-  Serial.print("Initializing temperature sensors ...");
-
-  dhtIn.begin();
-  dhtOut.begin();
+  Serial.println("Initializing temperature sensors ...");
+  internal_temp.begin();
+  external_temp.begin();
   Serial.println("Done");
   
-  Serial.println("Starting sketch with manual mode enabled");
+  Serial.println("Starting sketch");
+  Serial.println();
+  setupHappened = true;
 }
 
-
-/* For now, this is how we do timing:
-1. Take temperature every two seconds on both sensors.
-2. After TimeBetweenAverages miliseconds, average them.
-3. If there is a difference of more than TempDiffThreshold degree F, turn on blower.
-4. Else, turn off blower
-*/
-
-boolean manualModeWasEnabled = true;
-
 void loop() {
-  if(automaticModeEnabled()){
-    if(manualModeWasEnabled){
-      Serial.println("Switching to automatic mode");
-      
-      //Reset relay positions
-      setRelay(RelayHighBlower, HIGH);
-      setRelay(RelayLowBlower, HIGH);
-      setRelay(RelayPump, HIGH);
-      
-      //Reset timing logging
-      initLowBlower();
-    }
-    delay(TimeBetweenSamples);
-    
-    float inHumid = dhtIn.readHumidity();
-    float inTemp = dhtIn.readTemperature(true);
-    
-    float outHumid = dhtOut.readHumidity();
-    float outTemp = dhtOut.readTemperature(true);
+  delay(temp_poll_interval);
   
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(inTemp) || isnan(outTemp)) {
-      Serial.println("Failed to read from DHT sensors. ");
-      Serial.println("Trying again...");
-      return;
-    }
-    
-    Serial.print("inTemp: ");
-    Serial.print(inTemp);
-    Serial.print("\toutTemp: ");
-    Serial.print(outTemp);
-    Serial.println();
-    
-    runningInSum += inTemp;
-    runningOutSum += outTemp;
-    numDataPoints ++;
-    
-    if(millis() > (lastAverage + TimeBetweenAverages)){
-      double avgOut = runningOutSum / numDataPoints;
-      double avgIn = runningInSum / numDataPoints;
-      
-      Serial.println();
-      Serial.print("avgInTemp: ");
-      Serial.print(avgIn);
-      Serial.print("\tavgOutTemp");
-      Serial.print(avgOut);
-      Serial.println();
-      
-      if((avgIn - avgOut) >= TempDiffThreshold){
-        startLowBlower();
-      }
-      else{
-       stopLowBlower(); 
-      }
-      
-      Serial.println();
-      lastAverage = millis();
-      runningInSum = 0;
-      runningOutSum = 0;
-      numDataPoints = 0;
-    }
-    
-    manualModeWasEnabled = false;
-  }
+  float out_temp = external_temp.readTemperature(true); // Read Farenheight
+  float in_temp = internal_temp.readTemperature(true);
+  logTemps(in_temp, out_temp);
   
-  else{ // We are in manual mode
-    if(!manualModeWasEnabled){
-     Serial.println("Switching to manual mode"); 
+  // Dad hates high fan, but other may like it so we will keep it defined in setup() still.
+  if (out_temp > in_temp) {
+    if(in_temp > set_temp) {
+      // Pump + low fan
+      setRelay(&high_blower, relay_cold);
+      setRelay(&low_blower, relay_hot);
+      setRelay(&pump, relay_hot);
+    } else {
+      // Turn off everything
+      setRelay(&high_blower, relay_cold);
+      setRelay(&low_blower, relay_cold);
+      setRelay(&pump, relay_cold);
     }
-    manualModeWasEnabled = true;
-    setRelay(RelayHighBlower, digitalRead(HighBlowerSwitch));
-    setRelay(RelayLowBlower, digitalRead(LowBlowerSwitch));
-    setRelay(RelayPump, digitalRead(PumpSwitch));
+  } else {
+    // Low fan only
+    setRelay(&high_blower, relay_cold);
+    setRelay(&low_blower, relay_hot);
+    setRelay(&pump, relay_cold);
   }
+  Serial.println();
 }

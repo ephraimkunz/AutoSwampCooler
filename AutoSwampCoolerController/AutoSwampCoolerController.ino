@@ -3,17 +3,20 @@
 
 #include "DHT.h"
 
-#define external_temp_pin 2
-#define internal_temp_pin 3
+#define external_temp_pin 4
+#define internal_temp_pin 5
 
 #define low_blower_pin 8
 #define high_blower_pin 9
 #define pump_pin 10
 
-#define set_temp 70 // Temperature we set on the interface to the circuit
+#define set_temp 45 // Temperature we set on the interface to the circuit
+#define margin_of_error 0.5 // Number of degrees F we will allow temps to be out of sync before changing things (to prevent turning on/off too often)
+#define num_temp_reads_per_round 10 // More is better for averaging, but takes longer
+#define delay_between_temp_reads 500 // In milliseconds. Thus, total time to read temp for a round is num_temp_reads_per_round * (delay_between_temp_reads + DHT read delay)
 boolean setupHappened = false; // Have we run setup? Use to change logging for when we are just setting things up.
 
-#define temp_poll_interval (1000 * 10) // in milliseconds
+#define temp_poll_interval (1000 * 10) // in milliseconds: how often we poll for new temps / possible toggle relays
 
 
 typedef enum {
@@ -91,6 +94,24 @@ void logTemps(float in, float out) {
   Serial.println(" *F");
 }
 
+// Returns true if first is hotter than second, within the margin of error. Returns false otherwise
+boolean isHotterThan(float first, float second) {
+ float diff = first - second;
+ return first > 0 && second > 0 && diff > 0 && diff > margin_of_error;
+}
+
+void getAveragedTemperatures(float *in, float *out) {
+  float accum_in = 0.0;
+  float accum_out = 0.0;
+  for(int i = 0; i < num_temp_reads_per_round; ++i) {
+    accum_in += internal_temp.readTemperature(true); // Read Farenheit
+    accum_out += external_temp.readTemperature(true);
+    delay(delay_between_temp_reads);
+  }
+  *in = accum_in / num_temp_reads_per_round;
+  *out = accum_out / num_temp_reads_per_round;
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.println();
@@ -111,14 +132,15 @@ void setup() {
 
 void loop() {
   delay(temp_poll_interval);
-  
-  float out_temp = external_temp.readTemperature(true); // Read Farenheight
-  float in_temp = internal_temp.readTemperature(true);
+  float out_temp;
+  float in_temp;
+
+  getAveragedTemperatures(&in_temp, &out_temp);
   logTemps(in_temp, out_temp);
   
   // Dad hates high fan, but other may like it so we will keep it defined in setup() still.
-  if (out_temp > in_temp) {
-    if(in_temp > set_temp) {
+  if (isHotterThan(out_temp, in_temp)) {
+    if(isHotterThan(in_temp, set_temp)) {
       // Pump + low fan
       setRelay(&high_blower, relay_cold);
       setRelay(&low_blower, relay_hot);
